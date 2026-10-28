@@ -1,0 +1,117 @@
+name: spring-microservices
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: studentDb
+      MYSQL_USER: student
+      MYSQL_PASSWORD: student
+      MYSQL_ROOT_PASSWORD: root
+    ports: ["${MYSQL_PORT:-3306}:3306"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ustudent", "-pstudent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: coursesDb
+      POSTGRES_USER: course
+      POSTGRES_PASSWORD: course
+    ports: ["${POSTGRES_PORT:-5432}:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U course -d coursesDb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  config:
+    build: { context: ., args: { MODULE: microservice-config } }
+    ports: ["${CONFIG_PORT:-8888}:8888"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8888/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  eureka:
+    build: { context: ., args: { MODULE: microservice-eureka } }
+    environment:
+      CONFIG_HOST: config
+    ports: ["${EUREKA_PORT:-8761}:8761"]
+    depends_on:
+      config: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8761/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
+
+  student:
+    build: { context: ., args: { MODULE: microservice-student } }
+    environment:
+      CONFIG_HOST: config
+      EUREKA_HOST: eureka
+      STUDENT_DB_HOST: mysql
+      STUDENT_DB_PORT: 3306
+      STUDENT_DB_NAME: studentDb
+      STUDENT_DB_USER: student
+      STUDENT_DB_PASSWORD: student
+    ports: ["${STUDENT_PORT:-8090}:8090"]
+    depends_on:
+      config: { condition: service_healthy }
+      eureka: { condition: service_healthy }
+      mysql: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8090/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
+
+  course:
+    build: { context: ., args: { MODULE: microservice-course } }
+    environment:
+      CONFIG_HOST: config
+      EUREKA_HOST: eureka
+      COURSE_DB_HOST: postgres
+      COURSE_DB_PORT: 5432
+      COURSE_DB_NAME: coursesDb
+      COURSE_DB_USER: course
+      COURSE_DB_PASSWORD: course
+    ports: ["${COURSE_PORT:-9090}:9090"]
+    depends_on:
+      config: { condition: service_healthy }
+      eureka: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
+
+  gateway:
+    build: { context: ., args: { MODULE: microservice-gateway } }
+    environment:
+      CONFIG_HOST: config
+      EUREKA_HOST: eureka
+    ports: ["${GATEWAY_PORT:-8080}:8080"]
+    depends_on:
+      config: { condition: service_healthy }
+      eureka: { condition: service_healthy }
+      student: { condition: service_healthy }
+      course: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
