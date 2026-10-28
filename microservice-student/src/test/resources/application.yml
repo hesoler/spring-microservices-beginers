@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: msvc-student
+  cloud:
+    config:
+      enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database: mysql
+    database-platform: org.hibernate.dialect.MySQLDialect
+
+eureka:
+  client:
+    enabled: false
