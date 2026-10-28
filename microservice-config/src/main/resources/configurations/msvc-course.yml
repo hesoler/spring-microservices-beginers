@@ -6,18 +6,18 @@ spring:
     name: msvc-course
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/coursesDb
-    username: postgres
-    password: 150919
+    url: jdbc:postgresql://${COURSE_DB_HOST:localhost}:${COURSE_DB_PORT:5432}/${COURSE_DB_NAME:coursesDb}
+    username: ${COURSE_DB_USER:course}
+    password: ${COURSE_DB_PASSWORD:course}
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: update
     database: postgresql
     database-platform: org.hibernate.dialect.PostgreSQLDialect
 
 eureka:
   instance:
-    hostname: localhost
+    prefer-ip-address: true
   client:
     serviceUrl:
-      defaultZone: http://localhost:8761/eureka
+      defaultZone: http://${EUREKA_HOST:localhost}:8761/eureka/

@@ -6,18 +6,18 @@ spring:
     name: msvc-student
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/studentDb
-    username: root
-    password: 150919
+    url: jdbc:mysql://${STUDENT_DB_HOST:localhost}:${STUDENT_DB_PORT:3306}/${STUDENT_DB_NAME:studentDb}
+    username: ${STUDENT_DB_USER:student}
+    password: ${STUDENT_DB_PASSWORD:student}
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: update
     database: mysql
     database-platform: org.hibernate.dialect.MySQLDialect
 
 eureka:
   instance:
-    hostname: localhost
+    prefer-ip-address: true
   client:
     serviceUrl:
-      defaultZone: http://localhost:8761/eureka
+      defaultZone: http://${EUREKA_HOST:localhost}:8761/eureka/
