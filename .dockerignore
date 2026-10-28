@@ -1,0 +1,9 @@
+.git
+.idea
+**/target
+docs
+.superpowers
+.agents
+.engram
+skills-lock.json
+odd
