@@ -231,26 +231,32 @@ spring:
     gateway:
       discovery:
         locator:
-          enabled: true  # Permite descubrimiento dinámico de rutas
+          enabled: false  # Las rutas son explícitas, no autogeneradas
       routes:
         - id: students
-          uri: 'http://localhost:8090'  # Ruta al servicio de estudiantes
+          uri: lb://msvc-student  # Se resuelve vía Eureka, no es una URL fija
           predicates:
             - Path=/api/student/**
         - id: courses
-          uri: 'http://localhost:9090'  # Ruta al servicio de cursos
+          uri: lb://msvc-course
           predicates:
             - Path=/api/course/**
 
 eureka:
   client:
     register-with-eureka: false  # Gateway no necesita registrarse
+    fetch-registry: true         # Pero sí necesita leer el registro
+    serviceUrl:
+      defaultZone: http://${EUREKA_HOST:localhost}:8761/eureka/
 ```
 
 #### Cómo funciona el routing
 
-- `Path=/api/student/**` → Redirige a `http://localhost:8090`
-- `Path=/api/course/**` → Redirige a `http://localhost:9090`
+- `Path=/api/student/**` → `lb://msvc-student`, resuelto contra el registro de Eureka
+- `Path=/api/course/**` → `lb://msvc-course`, resuelto contra el registro de Eureka
+
+`lb://` requiere `spring-cloud-starter-loadbalancer` y una instancia registrada. Si el servicio
+destino está caído, el gateway responde **503**; no hay URL fija a la que recurrir.
 
 ---
 
@@ -300,22 +306,30 @@ spring:
     name: msvc-student
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/studentDb
-    username: root
-    password: 150919
+    url: jdbc:mysql://${STUDENT_DB_HOST:localhost}:${STUDENT_DB_PORT:3306}/${STUDENT_DB_NAME:studentDb}
+    username: ${STUDENT_DB_USER:student}
+    password: ${STUDENT_DB_PASSWORD:student}
   jpa:
     hibernate:
-      ddl-auto: create-drop  # Crear tablas automáticamente
+      ddl-auto: create  # Recrea el esquema en cada arranque
     database: mysql
     database-platform: org.hibernate.dialect.MySQLDialect
 
 eureka:
   instance:
-    hostname: localhost
+    prefer-ip-address: true
   client:
     serviceUrl:
-      defaultZone: http://localhost:8761/eureka  # Registro en Eureka
+      defaultZone: http://${EUREKA_HOST:localhost}:8761/eureka/
 ```
+
+Las credenciales y el host son *placeholders*: el Config Server los entrega sin resolver y cada
+servicio los resuelve contra sus propias variables de entorno. Los valores por defecto sirven
+para ejecutar en local, y `docker-compose.yml` los sobrescribe (`STUDENT_DB_HOST: mysql`).
+
+`ddl-auto: create` recrea el esquema en cada arranque y vuelve a ejecutar
+`src/main/resources/import.sql`, que siembra cinco estudiantes de ejemplo. Reiniciar el servicio
+**reinicia los datos**: es un demo, no una base persistente.
 
 #### Modelo de datos (Entidad Student)
 
@@ -379,22 +393,25 @@ spring:
     name: msvc-course
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/coursesDb
-    username: postgres
-    password: 150919
+    url: jdbc:postgresql://${COURSE_DB_HOST:localhost}:${COURSE_DB_PORT:5432}/${COURSE_DB_NAME:coursesDb}
+    username: ${COURSE_DB_USER:course}
+    password: ${COURSE_DB_PASSWORD:course}
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: create
     database: postgresql
     database-platform: org.hibernate.dialect.PostgreSQLDialect
 
 eureka:
   instance:
-    hostname: localhost
+    prefer-ip-address: true
   client:
     serviceUrl:
-      defaultZone: http://localhost:8761/eureka
+      defaultZone: http://${EUREKA_HOST:localhost}:8761/eureka/
 ```
+
+Igual que en student, `ddl-auto: create` recrea el esquema y vuelve a sembrar
+`src/main/resources/import.sql` con cinco cursos de ejemplo en cada arranque.
 
 #### Modelo de datos (Entidad Course)
 
@@ -416,13 +433,17 @@ public class Course {
 
 ```java
 
-@FeignClient(name = "msvc-student", url = "localhost:8090")
+@FeignClient(name = "msvc-student")  // sin url: se resuelve vía Eureka
 public interface StudentClient {
 
     @GetMapping("/api/student/search-by-course/{courseId}")
     List<StudentDTO> findAllStudentByCourse(@PathVariable Long courseId);
 }
 ```
+
+Sin `url`, Feign busca `msvc-student` en el registro de Eureka y reparte la llamada con
+`spring-cloud-starter-loadbalancer`. Si student no está registrado, la llamada falla y el
+endpoint responde 500.
 
 **¿Por qué Feign?**
 
@@ -479,7 +500,14 @@ microservice-config (Puerto 8888)
                 │
                 ▼
     Todos los microservicios importan desde:
-    spring.config.import: optional:configserver:http://localhost:8888
+    spring.config.import: configserver:http://${CONFIG_HOST:localhost}:8888
+```
+
+El import **no** es `optional:`. Si el Config Server no está arriba, el servicio no arranca y
+falla con el mensaje que dice exactamente qué falta:
+
+```
+I/O error on GET request for "http://localhost:8888/msvc-student/default": Connection refused
 ```
 
 ### Perfil `native`
@@ -500,7 +528,7 @@ spring:
   application:
     name: msvc-student  # Coincide con msvc-student.yml
   config:
-    import: optional:configserver:http://localhost:8888
+    import: 'configserver:http://${CONFIG_HOST:localhost}:8888'
 ```
 
 ---
@@ -509,53 +537,56 @@ spring:
 
 ### Prerrequisitos
 
-- JDK 17+
-- Maven 3.6+
-- MySQL (puerto 3306)
-- PostgreSQL (puerto 5432)
+Docker con Compose. Nada más: no hace falta JDK, ni Maven, ni MySQL, ni PostgreSQL instalados.
 
-### Base de datos
+### Un solo comando
 
-**MySQL** (para microservice-student):
-
-```sql
-CREATE DATABASE studentDb;
+```bash
+docker compose up --build -d
 ```
 
-**PostgreSQL** (para microservice-course):
+La primera vez tarda varios minutos porque descarga las dependencias de Maven dentro de la
+imagen. Después, los arranques son rápidos. Levanta las siete piezas: `mysql`, `postgres`,
+`config`, `eureka`, `student`, `course` y `gateway`.
 
-```sql
-CREATE DATABASE coursesDb;
+Espera un poco y comprueba el sistema de punta a punta:
+
+```bash
+bash scripts/smoke.sh
 ```
 
-### Orden de ejecución
+El script espera a que el gateway enrute a ambos servicios, crea un curso y un estudiante, y
+comprueba que ambos se leyeron de vuelta desde sus bases de datos.
 
-1. **Config Server** (siempre primero):
-   ```bash
-   cd microservice-config
-   mvn spring-boot:run
-   ```
+El stack levanta el esquema y siembra los datos de ejemplo (`import.sql`) en cada arranque, así
+que `docker compose down -v` y otro `up` te deja las bases limpias y sembradas de nuevo.
 
-2. **Eureka Server**:
-   ```bash
-   cd microservice-eureka
-   mvn spring-boot:run
-   ```
+### Si el puerto 8080 ya está ocupado
 
-3. **Microservicios** (en paralelo o en cualquier orden):
-   ```bash
-   cd microservice-student
-   mvn spring-boot:run
-   
-   cd microservice-course
-   mvn spring-boot:run
-   ```
+Todos los puertos publicados se pueden cambiar sin tocar el archivo:
 
-4. **API Gateway** (opcional, puede ejecutarse antes):
-   ```bash
-   cd microservice-gateway
-   mvn spring-boot:run
-   ```
+```bash
+GATEWAY_PORT=8081 docker compose up --build -d
+GATEWAY_PORT=8081 bash scripts/smoke.sh
+```
+
+Lo mismo con `STUDENT_PORT`, `COURSE_PORT`, `EUREKA_PORT`, `CONFIG_PORT`, `MYSQL_PORT` y
+`POSTGRES_PORT`.
+
+### Ejecución desde Maven (sin contenedores)
+
+El Config Server es obligatorio y debe arrancar primero; si no está, el servicio falla con
+`Connection refused` contra el puerto 8888 en lugar de arrancar a medias. Además necesitas MySQL
+en 3306 y PostgreSQL en 5432 con las credenciales por defecto (`student/student` y
+`course/course`) o las variables `STUDENT_DB_*` / `COURSE_DB_*` correspondientes.
+
+```bash
+cd microservice-config && mvn spring-boot:run     # primero, siempre
+cd microservice-eureka  && mvn spring-boot:run
+cd microservice-student && mvn spring-boot:run
+cd microservice-course  && mvn spring-boot:run
+cd microservice-gateway && mvn spring-boot:run
+```
 
 ### Verificación
 
@@ -566,6 +597,18 @@ CREATE DATABASE coursesDb;
 | Student API      | http://localhost:8090/api/student |
 | Course API       | http://localhost:9090/api/course  |
 | Config Server    | http://localhost:8888             |
+
+Durante los primeros ~30 segundos el gateway responde **503**: todavía no hay servicios
+registrados en Eureka. Un servicio reiniciado tarda hasta ~80 segundos en volver a aparecer.
+
+### Tests
+
+```bash
+mvn test
+```
+
+Solo necesita Docker: cada test arranca su propia base con Testcontainers y desactiva la
+importación del Config Server y el cliente de Eureka. No hace falta tener nada corriendo.
 
 ---
 
