@@ -11,8 +11,11 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/student")
 public class StudentController {
 
-    @Autowired
-    private IStudentService studentService;
+  private final IStudentService studentService;
+
+  public StudentController(IStudentService studentService) {
+    this.studentService = studentService;
+  }
 
     @PostMapping("/create")
     @ResponseStatus(HttpStatus.CREATED)
