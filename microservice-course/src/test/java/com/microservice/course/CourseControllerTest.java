@@ -28,69 +28,68 @@ import static org.mockito.Mockito.when;
 @Testcontainers
 class CourseControllerTest {
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine")
-            .withDatabaseName("coursesDb")
-            .withUsername("course")
-            .withPassword("course");
+  @Container
+  static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine")
+      .withDatabaseName("coursesDb")
+      .withUsername("course")
+      .withPassword("course");
 
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", POSTGRES::getUsername);
-        registry.add("spring.datasource.password", POSTGRES::getPassword);
-    }
+  @MockBean
+  private StudentClient studentClient;
+  @Autowired
+  private TestRestTemplate rest;
 
-    @MockBean
-    private StudentClient studentClient;
+  @DynamicPropertySource
+  static void datasource(DynamicPropertyRegistry registry) {
+    registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+    registry.add("spring.datasource.username", POSTGRES::getUsername);
+    registry.add("spring.datasource.password", POSTGRES::getPassword);
+  }
 
-    @Autowired
-    private TestRestTemplate rest;
+  @BeforeEach
+  void stubStudentService() {
+    when(studentClient.findAllStudentByCourse(anyLong())).thenAnswer(invocation -> List.of(
+        StudentDTO.builder()
+            .name("Ada").lastName("Lovelace").email("ada@example.com")
+            .courseId(invocation.getArgument(0))
+            .build()));
+  }
 
-    @BeforeEach
-    void stubStudentService() {
-        when(studentClient.findAllStudentByCourse(anyLong())).thenAnswer(invocation -> List.of(
-                StudentDTO.builder()
-                        .name("Ada").lastName("Lovelace").email("ada@example.com")
-                        .courseId(invocation.getArgument(0))
-                        .build()));
-    }
+  @Test
+  void createsAndReadsBackACourse() {
+    Course course = Course.builder().name("Architecture").teacher("Hector").build();
 
-    @Test
-    void createsAndReadsBackACourse() {
-        Course course = Course.builder().name("Architecture").teacher("Hector").build();
+    ResponseEntity<Void> created = rest.postForEntity("/api/course/create", course, Void.class);
+    assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
 
-        ResponseEntity<Void> created = rest.postForEntity("/api/course/create", course, Void.class);
-        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    Course stored = storedByName("Architecture");
+    Course found = rest.getForObject("/api/course/search/{id}", Course.class, stored.getId());
 
-        Course stored = storedByName("Architecture");
-        Course found = rest.getForObject("/api/course/search/{id}", Course.class, stored.getId());
+    assertThat(found.getName()).isEqualTo("Architecture");
+    assertThat(found.getTeacher()).isEqualTo("Hector");
+  }
 
-        assertThat(found.getName()).isEqualTo("Architecture");
-        assertThat(found.getTeacher()).isEqualTo("Hector");
-    }
+  @Test
+  void composesCourseWithStudentsFromTheStudentService() {
+    rest.postForEntity("/api/course/create",
+        Course.builder().name("Distributed Systems").teacher("Hector").build(), Void.class);
+    Course stored = storedByName("Distributed Systems");
 
-    @Test
-    void composesCourseWithStudentsFromTheStudentService() {
-        rest.postForEntity("/api/course/create",
-                Course.builder().name("Distributed Systems").teacher("Hector").build(), Void.class);
-        Course stored = storedByName("Distributed Systems");
+    ResponseEntity<String> response = rest.getForEntity(
+        "/api/course/search-student/{courseId}", String.class, stored.getId());
 
-        ResponseEntity<String> response = rest.getForEntity(
-                "/api/course/search-student/{courseId}", String.class, stored.getId());
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody())
+        .contains("Distributed Systems")
+        .contains("Hector")
+        .contains("ada@example.com");
+  }
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody())
-                .contains("Distributed Systems")
-                .contains("Hector")
-                .contains("ada@example.com");
-    }
-
-    private Course storedByName(String name) {
-        Course[] all = rest.getForObject("/api/course/all", Course[].class);
-        return Arrays.stream(all)
-                .filter(c -> name.equals(c.getName()))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("course " + name + " was not persisted"));
-    }
+  private Course storedByName(String name) {
+    Course[] all = rest.getForObject("/api/course/all", Course[].class);
+    return Arrays.stream(all)
+        .filter(c -> name.equals(c.getName()))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("course " + name + " was not persisted"));
+  }
 }

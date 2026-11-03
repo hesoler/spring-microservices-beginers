@@ -21,58 +21,59 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 class StudentControllerTest {
 
-    @Container
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0")
-            .withDatabaseName("studentDb")
-            .withUsername("student")
-            .withPassword("student");
+  @Container
+  static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0")
+      .withDatabaseName("studentDb")
+      .withUsername("student")
+      .withPassword("student");
 
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-    }
+  @Autowired
+  private TestRestTemplate rest;
 
-    @Autowired
-    private TestRestTemplate rest;
+  @DynamicPropertySource
+  static void datasource(DynamicPropertyRegistry registry) {
+    registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
+    registry.add("spring.datasource.username", MYSQL::getUsername);
+    registry.add("spring.datasource.password", MYSQL::getPassword);
+  }
 
-    @Test
-    void createsAndReadsBackAStudent() {
-        Student student = Student.builder()
-                .name("Ada").lastName("Lovelace").email("ada@example.com").courseId(7L)
-                .build();
+  @Test
+  void createsAndReadsBackAStudent() {
+    Student student = Student.builder()
+        .name("Ada").lastName("Lovelace").email("ada@example.com").courseId(7L)
+        .build();
 
-        ResponseEntity<Void> created = rest.postForEntity("/api/student/create", student, Void.class);
-        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    ResponseEntity<Void> created = rest.postForEntity("/api/student/create", student, Void.class);
+    assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
 
-        Student stored = storedByEmail("ada@example.com");
-        Student found = rest.getForObject("/api/student/search/{id}", Student.class, stored.getId());
+    Student stored = storedByEmail("ada@example.com");
+    Student found = rest.getForObject("/api/student/search/{id}", Student.class, stored.getId());
 
-        assertThat(found.getName()).isEqualTo("Ada");
-        assertThat(found.getLastName()).isEqualTo("Lovelace");
-        assertThat(found.getEmail()).isEqualTo("ada@example.com");
-        assertThat(found.getCourseId()).isEqualTo(7L);
-    }
+    assertThat(found.getName()).isEqualTo("Ada");
+    assertThat(found.getLastName()).isEqualTo("Lovelace");
+    assertThat(found.getEmail()).isEqualTo("ada@example.com");
+    assertThat(found.getCourseId()).isEqualTo(7L);
+  }
 
-    @Test
-    void filtersStudentsByCourse() {
-        rest.postForEntity("/api/student/create", Student.builder()
-                .name("In").lastName("Course").email("in@example.com").courseId(999L).build(), Void.class);
-        rest.postForEntity("/api/student/create", Student.builder()
-                .name("Out").lastName("OfCourse").email("out@example.com").courseId(998L).build(), Void.class);
+  @Test
+  void filtersStudentsByCourse() {
+    rest.postForEntity("/api/student/create", Student.builder()
+        .name("In").lastName("Course").email("in@example.com").courseId(999L).build(), Void.class);
+    rest.postForEntity("/api/student/create", Student.builder()
+            .name("Out").lastName("OfCourse").email("out@example.com").courseId(998L).build(),
+        Void.class);
 
-        Student[] filtered = rest.getForObject(
-                "/api/student/search-by-course/{courseId}", Student[].class, 999L);
+    Student[] filtered = rest.getForObject(
+        "/api/student/search-by-course/{courseId}", Student[].class, 999L);
 
-        assertThat(filtered).extracting(Student::getEmail).containsExactly("in@example.com");
-    }
+    assertThat(filtered).extracting(Student::getEmail).containsExactly("in@example.com");
+  }
 
-    private Student storedByEmail(String email) {
-        Student[] all = rest.getForObject("/api/student/all", Student[].class);
-        return Arrays.stream(all)
-                .filter(s -> email.equals(s.getEmail()))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("student " + email + " was not persisted"));
-    }
+  private Student storedByEmail(String email) {
+    Student[] all = rest.getForObject("/api/student/all", Student[].class);
+    return Arrays.stream(all)
+        .filter(s -> email.equals(s.getEmail()))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("student " + email + " was not persisted"));
+  }
 }

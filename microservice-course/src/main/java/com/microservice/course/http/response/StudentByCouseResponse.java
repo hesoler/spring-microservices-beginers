@@ -14,7 +14,7 @@ import java.util.List;
 @NoArgsConstructor
 public class StudentByCouseResponse {
 
-    private String courseName;
-    private String teacher;
-    private List<StudentDTO> studentDTOList;
+  private String courseName;
+  private String teacher;
+  private List<StudentDTO> studentDTOList;
 }
